@@ -162,13 +162,17 @@
   </header>
 
   <div id="warningBanner" class="warning-banner">
-    ⚠ OVERSPEED WARNING: Speed is above 1 m/s!
+    ⚠ OVERSPEED WARNING: Speed is above <span id="warningLimitText">0.01 m/s</span>!
   </div>
 
   <section class="dashboard">
     <div class="card">
       <h3>Speed</h3>
       <p id="speed">0 m/s</p>
+    </div>
+    <div class="card">
+      <h3>Speed Limit</h3>
+      <p id="speedLimit">0.01 m/s</p>
     </div>
     <div class="card">
       <h3>Heading</h3>
@@ -226,7 +230,7 @@
     let deviceHeading = null;
     let compassEnabled = false;
 
-    const SPEED_LIMIT_MS = 1;
+    const SPEED_LIMIT_MS = 0.01;
     let isOverspeeding = false;
     let audioContext = null;
     let warningSoundInterval = null;
@@ -286,8 +290,11 @@
         return;
       }
 
+      document.getElementById("speedLimit").innerText = SPEED_LIMIT_MS.toFixed(2) + " m/s";
+      document.getElementById("warningLimitText").innerText = SPEED_LIMIT_MS.toFixed(2) + " m/s";
+
       document.getElementById("status").innerText =
-        "Tracking started. Waiting for location...";
+        "Tracking started. Waiting for location... Limit set: " + SPEED_LIMIT_MS.toFixed(2) + " m/s";
 
       watchId = navigator.geolocation.watchPosition(
         updateLocation,
@@ -446,7 +453,7 @@
         speedElement.classList.add("speed-warning");
         warningBanner.style.display = "block";
         document.getElementById("status").innerText =
-          "Overspeed detected. Please slow down.";
+          "Overspeed detected. Limit set: " + SPEED_LIMIT_MS.toFixed(2) + " m/s. Please slow down.";
 
         if (!isOverspeeding) {
           isOverspeeding = true;
