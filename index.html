@@ -27,6 +27,22 @@
       text-align: center;
     }
 
+    .warning-banner {
+      display: none;
+      padding: 18px;
+      text-align: center;
+      background: #dc2626;
+      color: white;
+      font-size: 24px;
+      font-weight: bold;
+      animation: flash 0.7s infinite alternate;
+    }
+
+    @keyframes flash {
+      from { opacity: 1; }
+      to { opacity: 0.55; }
+    }
+
     .dashboard {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -51,6 +67,10 @@
     .card p {
       font-size: 20px;
       font-weight: bold;
+    }
+
+    .speed-warning {
+      color: #dc2626;
     }
 
     .map-options {
@@ -141,6 +161,10 @@
     <h1>Live Location & Speed Tracker</h1>
   </header>
 
+  <div id="warningBanner" class="warning-banner">
+    ⚠ OVERSPEED WARNING: Speed is above 1 m/s!
+  </div>
+
   <section class="dashboard">
     <div class="card">
       <h3>Speed</h3>
@@ -202,6 +226,11 @@
     let deviceHeading = null;
     let compassEnabled = false;
 
+    const SPEED_LIMIT_MS = 1;
+    let isOverspeeding = false;
+    let audioContext = null;
+    let warningSoundInterval = null;
+
     const mapLayers = {
       street: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
@@ -243,6 +272,8 @@
     }
 
     function startTracking() {
+      unlockAudio();
+
       if (!window.isSecureContext) {
         document.getElementById("status").innerHTML =
           "Location may not work because this page is not secure.<br>On iPhone, open it using HTTPS or localhost, not directly as a file.";
@@ -273,8 +304,10 @@
       if (watchId !== null) {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
-        document.getElementById("status").innerText = "Tracking stopped.";
       }
+
+      stopOverspeedWarning();
+      document.getElementById("status").innerText = "Tracking stopped.";
     }
 
     async function startOrientation() {
@@ -310,11 +343,9 @@
     function handleOrientation(event) {
       let heading;
 
-      // iPhone Safari gives compass heading here
       if (event.webkitCompassHeading !== undefined) {
         heading = event.webkitCompassHeading;
       } else if (event.alpha !== null) {
-        // Android/other browsers usually use alpha
         heading = 360 - event.alpha;
       } else {
         return;
@@ -329,7 +360,7 @@
       const lat = position.coords.latitude;
       const lon = position.coords.longitude;
       const accuracy = position.coords.accuracy;
-      const gpsSpeed = position.coords.speed; // meters/second, may be null
+      const gpsSpeed = position.coords.speed;
       const timestamp = position.timestamp;
 
       currentLat = lat;
@@ -361,8 +392,13 @@
       document.getElementById("latitude").innerText = lat.toFixed(6);
       document.getElementById("longitude").innerText = lon.toFixed(6);
       document.getElementById("accuracy").innerText = accuracy.toFixed(1) + " m";
-      document.getElementById("status").innerText =
-        "Location updated. Source may be GPS, Wi-Fi, or mobile network depending on device availability.";
+
+      checkOverspeed(speedMs);
+
+      if (!isOverspeeding) {
+        document.getElementById("status").innerText =
+          "Location updated. Source may be GPS, Wi-Fi, or mobile network depending on device availability.";
+      }
 
       const userLocation = [lat, lon];
 
@@ -402,11 +438,92 @@
       map.setView(userLocation, 17);
     }
 
+    function checkOverspeed(speedMs) {
+      const speedElement = document.getElementById("speed");
+      const warningBanner = document.getElementById("warningBanner");
+
+      if (speedMs > SPEED_LIMIT_MS) {
+        speedElement.classList.add("speed-warning");
+        warningBanner.style.display = "block";
+        document.getElementById("status").innerText =
+          "Overspeed detected. Please slow down.";
+
+        if (!isOverspeeding) {
+          isOverspeeding = true;
+          startOverspeedSound();
+        }
+      } else {
+        speedElement.classList.remove("speed-warning");
+        warningBanner.style.display = "none";
+
+        if (isOverspeeding) {
+          stopOverspeedWarning();
+        }
+      }
+    }
+
+    function unlockAudio() {
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        if (audioContext.state === "suspended") {
+          audioContext.resume();
+        }
+      } catch (err) {
+        console.log("Audio unlock failed:", err);
+      }
+    }
+
+    function startOverspeedSound() {
+      unlockAudio();
+      playWarningBeep();
+
+      if (!warningSoundInterval) {
+        warningSoundInterval = setInterval(playWarningBeep, 900);
+      }
+    }
+
+    function stopOverspeedWarning() {
+      isOverspeeding = false;
+      document.getElementById("warningBanner").style.display = "none";
+      document.getElementById("speed").classList.remove("speed-warning");
+
+      if (warningSoundInterval) {
+        clearInterval(warningSoundInterval);
+        warningSoundInterval = null;
+      }
+    }
+
+    function playWarningBeep() {
+      try {
+        if (!audioContext) return;
+
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(900, audioContext.currentTime);
+
+        gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.45, audioContext.currentTime + 0.02);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.25);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.25);
+      } catch (err) {
+        console.log("Beep failed:", err);
+      }
+    }
+
     function rotateDirectionMarker() {
       const arrow = document.getElementById("directionMarker");
       if (!arrow || deviceHeading === null) return;
 
-      // Leaflet map stays north-up. The arrow rotates to show the phone/device heading.
       arrow.style.transform = "rotate(" + deviceHeading + "deg)";
     }
 
