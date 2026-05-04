@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Location & Speed Map</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      background: #f4f6f8;
+      color: #111827;
+    }
+
+    header {
+      padding: 16px;
+      background: #111827;
+      color: white;
+      text-align: center;
+    }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .card {
+      background: white;
+      padding: 14px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      text-align: center;
+    }
+
+    .card h3 {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .card p {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .map-options {
+      padding: 0 14px 14px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .map-options label {
+      font-weight: bold;
+    }
+
+    select {
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #d1d5db;
+      font-size: 15px;
+      background: white;
+    }
+
+    #map {
+      height: 65vh;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      padding: 14px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    .start {
+      background: #16a34a;
+      color: white;
+    }
+
+    .stop {
+      background: #dc2626;
+      color: white;
+    }
+
+    .locate {
+      background: #2563eb;
+      color: white;
+    }
+
+    .orientation {
+      background: #7c3aed;
+      color: white;
+    }
+
+    .status {
+      padding: 10px 14px;
+      text-align: center;
+      color: #374151;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .direction-marker {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      transform-origin: center center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Live Location & Speed Tracker</h1>
+  </header>
+
+  <section class="dashboard">
+    <div class="card">
+      <h3>Speed</h3>
+      <p id="speed">0 m/s</p>
+    </div>
+    <div class="card">
+      <h3>Heading</h3>
+      <p id="heading">--</p>
+    </div>
+    <div class="card">
+      <h3>Latitude</h3>
+      <p id="latitude">--</p>
+    </div>
+    <div class="card">
+      <h3>Longitude</h3>
+      <p id="longitude">--</p>
+    </div>
+    <div class="card">
+      <h3>Accuracy</h3>
+      <p id="accuracy">--</p>
+    </div>
+  </section>
+
+  <div class="map-options">
+    <label for="mapType">Choose Map:</label>
+    <select id="mapType" onchange="changeMapType()">
+      <option value="street">Street Map</option>
+      <option value="satellite">Satellite</option>
+      <option value="dark">Dark Map</option>
+      <option value="terrain">Terrain</option>
+    </select>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="controls">
+    <button class="start" onclick="startTracking()">Start Tracking</button>
+    <button class="stop" onclick="stopTracking()">Stop Tracking</button>
+    <button class="locate" onclick="centerMap()">Center Map</button>
+    <button class="orientation" onclick="startOrientation()">Enable Compass</button>
+  </div>
+
+  <p class="status" id="status">Press Start Tracking and allow location permission.</p>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    let map;
+    let marker;
+    let accuracyCircle;
+    let pathLine;
+    let watchId = null;
+    let currentLayer;
+
+    let lastPosition = null;
+    let currentLat = null;
+    let currentLon = null;
+    let routePoints = [];
+    let deviceHeading = null;
+    let compassEnabled = false;
+
+    const mapLayers = {
+      street: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors"
+      }),
+      satellite: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 19,
+        attribution: "Tiles &copy; Esri"
+      }),
+      dark: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+      }),
+      terrain: L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+        maxZoom: 17,
+        attribution: "&copy; OpenTopoMap contributors"
+      })
+    };
+
+    map = L.map("map", {
+      zoomControl: true
+    }).setView([-1.9441, 30.0619], 13);
+
+    currentLayer = mapLayers.street;
+    currentLayer.addTo(map);
+
+    function changeMapType() {
+      const selectedMap = document.getElementById("mapType").value;
+
+      if (currentLayer) {
+        map.removeLayer(currentLayer);
+      }
+
+      currentLayer = mapLayers[selectedMap];
+      currentLayer.addTo(map);
+
+      document.getElementById("status").innerText =
+        "Map changed to " + document.getElementById("mapType").selectedOptions[0].text + ".";
+    }
+
+    function startTracking() {
+      if (!window.isSecureContext) {
+        document.getElementById("status").innerHTML =
+          "Location may not work because this page is not secure.<br>On iPhone, open it using HTTPS or localhost, not directly as a file.";
+        return;
+      }
+
+      if (!navigator.geolocation) {
+        document.getElementById("status").innerText =
+          "Geolocation is not supported by this browser/device.";
+        return;
+      }
+
+      document.getElementById("status").innerText =
+        "Tracking started. Waiting for location...";
+
+      watchId = navigator.geolocation.watchPosition(
+        updateLocation,
+        handleError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 20000
+        }
+      );
+    }
+
+    function stopTracking() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        document.getElementById("status").innerText = "Tracking stopped.";
+      }
+    }
+
+    async function startOrientation() {
+      if (!window.isSecureContext) {
+        document.getElementById("status").innerHTML =
+          "Compass needs a secure page.<br>Use HTTPS or localhost.";
+        return;
+      }
+
+      try {
+        if (
+          typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function"
+        ) {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission !== "granted") {
+            document.getElementById("status").innerText =
+              "Compass permission denied.";
+            return;
+          }
+        }
+
+        window.addEventListener("deviceorientation", handleOrientation, true);
+        compassEnabled = true;
+        document.getElementById("status").innerText =
+          "Compass enabled. The arrow shows device direction. The map remains north-up for accuracy.";
+      } catch (err) {
+        document.getElementById("status").innerText =
+          "Compass error: " + err.message;
+      }
+    }
+
+    function handleOrientation(event) {
+      let heading;
+
+      // iPhone Safari gives compass heading here
+      if (event.webkitCompassHeading !== undefined) {
+        heading = event.webkitCompassHeading;
+      } else if (event.alpha !== null) {
+        // Android/other browsers usually use alpha
+        heading = 360 - event.alpha;
+      } else {
+        return;
+      }
+
+      deviceHeading = normalizeDegrees(heading);
+      document.getElementById("heading").innerText = deviceHeading.toFixed(0) + "°";
+      rotateDirectionMarker();
+    }
+
+    function updateLocation(position) {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+      const gpsSpeed = position.coords.speed; // meters/second, may be null
+      const timestamp = position.timestamp;
+
+      currentLat = lat;
+      currentLon = lon;
+
+      let speedMs = 0;
+
+      if (gpsSpeed !== null && !isNaN(gpsSpeed)) {
+        speedMs = gpsSpeed;
+      } else if (lastPosition) {
+        const distanceMeters = getDistanceMeters(
+          lastPosition.lat,
+          lastPosition.lon,
+          lat,
+          lon
+        );
+
+        const timeSeconds = (timestamp - lastPosition.timestamp) / 1000;
+
+        if (timeSeconds > 0) {
+          speedMs = distanceMeters / timeSeconds;
+        }
+      }
+
+      lastPosition = { lat, lon, timestamp };
+      routePoints.push([lat, lon]);
+
+      document.getElementById("speed").innerText = speedMs.toFixed(2) + " m/s";
+      document.getElementById("latitude").innerText = lat.toFixed(6);
+      document.getElementById("longitude").innerText = lon.toFixed(6);
+      document.getElementById("accuracy").innerText = accuracy.toFixed(1) + " m";
+      document.getElementById("status").innerText =
+        "Location updated. Source may be GPS, Wi-Fi, or mobile network depending on device availability.";
+
+      const userLocation = [lat, lon];
+
+      if (!marker) {
+        const directionIcon = L.divIcon({
+          className: "",
+          html: '<div id="directionMarker" class="direction-marker">▲</div>',
+          iconSize: [36, 36],
+          iconAnchor: [18, 18]
+        });
+
+        marker = L.marker(userLocation, { icon: directionIcon })
+          .addTo(map)
+          .bindPopup("You are here")
+          .openPopup();
+      } else {
+        marker.setLatLng(userLocation);
+      }
+
+      rotateDirectionMarker();
+
+      if (!accuracyCircle) {
+        accuracyCircle = L.circle(userLocation, {
+          radius: accuracy
+        }).addTo(map);
+      } else {
+        accuracyCircle.setLatLng(userLocation);
+        accuracyCircle.setRadius(accuracy);
+      }
+
+      if (!pathLine) {
+        pathLine = L.polyline(routePoints).addTo(map);
+      } else {
+        pathLine.setLatLngs(routePoints);
+      }
+
+      map.setView(userLocation, 17);
+    }
+
+    function rotateDirectionMarker() {
+      const arrow = document.getElementById("directionMarker");
+      if (!arrow || deviceHeading === null) return;
+
+      // Leaflet map stays north-up. The arrow rotates to show the phone/device heading.
+      arrow.style.transform = "rotate(" + deviceHeading + "deg)";
+    }
+
+    function centerMap() {
+      if (currentLat !== null && currentLon !== null) {
+        map.setView([currentLat, currentLon], 17);
+      } else {
+        document.getElementById("status").innerText =
+          "No location yet. Press Start Tracking first.";
+      }
+    }
+
+    function handleError(error) {
+      let message = "Location error: ";
+
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          message += "Permission denied. On iPhone, go to Settings > Privacy & Security > Location Services and allow Safari location access.";
+          break;
+        case error.POSITION_UNAVAILABLE:
+          message += "Location unavailable. Turn on GPS/location services, Wi-Fi, or mobile data.";
+          break;
+        case error.TIMEOUT:
+          message += "Location request timed out. Try going outside or turning on high accuracy/location services.";
+          break;
+        default:
+          message += "Unknown error.";
+      }
+
+      document.getElementById("status").innerText = message;
+    }
+
+    function getDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = toRadians(lat2 - lat1);
+      const dLon = toRadians(lon2 - lon1);
+
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRadians(lat1)) *
+        Math.cos(toRadians(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function toRadians(degrees) {
+      return degrees * Math.PI / 180;
+    }
+
+    function normalizeDegrees(degrees) {
+      return ((degrees % 360) + 360) % 360;
+    }
+  </script>
+</body>
+</html>
